@@ -44,18 +44,24 @@ on_client_disconnected(#{client_id := ClientId}, ReasonCode, _Env) ->
     io:format("Client(~s) disconnected, reason_code: ~w~n", [ClientId, ReasonCode]).
 on_client_subscribe(#{client_id := ClientId}, RawTopicFilters, _Env) ->
     io:format("Client(~s) will subscribe: ~p", [ClientId, RawTopicFilters]),
-%   voifinity_message_action:recv(ClientId,element(1,hd(RawTopicFilters))),   
+    
     {ok,RawTopicFilters}.
 on_client_unsubscribe(#{client_id := ClientId}, RawTopicFilters, _Env) ->
     io:format("Client(~s) unsubscribe ~p~n", [ClientId, RawTopicFilters]),
     {ok, RawTopicFilters}.
 on_session_created(#{client_id := ClientId}, SessAttrs, _Env) ->
-    io:format("Session(~s) created: ~p~n", [ClientId, SessAttrs]).
+    io:format("Session(~s) created: ~p~n", [ClientId, SessAttrs]),
+    voifinity_message_action:restart(ClientId,SessAttrs).
+    %Topic = list_to_binary(binary_to_list(element(2,lists:nth(3,SessAttrs))) -- "mqttjs_"),
+    %erlang:send_after(5000,),
+    %timer:sleep(10000),
+    %voifinity_message_action:recv(ClientId,Topic).
 on_session_resumed(#{client_id := ClientId}, SessAttrs, _Env) ->
     io:format("Session(~s) resumed: ~p~n", [ClientId, SessAttrs]).
 on_session_subscribed(#{client_id := ClientId}, Topic, SubOpts, _Env) ->
-    io:format("Session(~s) subscribe ~s with subopts: ~p~n", [ClientId, Topic, SubOpts]).
-    %voifinity_message_action:recv(clientId,Topic).
+    io:format("Session(~s) subscribe ~s with subopts: ~p~n", [ClientId, Topic, SubOpts]),
+   % timer:sleep(10000),
+    voifinity_message_action:recv(ClientId,Topic).
 on_session_unsubscribed(#{client_id := ClientId}, Topic, Opts, _Env) ->
     io:format("Session(~s) unsubscribe ~s with opts: ~p~n", [ClientId, Topic, Opts]).
 on_session_terminated(#{client_id := ClientId}, ReasonCode, _Env) ->

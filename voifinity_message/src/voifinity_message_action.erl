@@ -9,7 +9,9 @@
 	,notification_for_all/1
 	,push/1
         ,push_determination/3
+        ,restart/2
 	]).
+-record(restart,{clientid,state}).
 -record(undeliveredmsg,{messageid,clientid,topic,message,accountid,field1,field2,field3,field4,field5}).
 -record(userinformation,{topic,faviourategroup,last_seen,field1,field2,field3,field4,field5}).
 -record(pushnotification,{deviceid,topic,devicetype,field1,field2,field3,field4,field5}).
@@ -36,6 +38,12 @@ init() ->
   	                   ,{attributes,record_info(fields,undeliveredmsg)}
   	                   ,{index,[clientid,topic,message,accountid,field1,field2,field3,field4,field5]}
   	                  ]),
+  mnesia:create_table(restart
+                      ,[{ram_copies
+                           ,[node()]}
+                           ,{attributes,record_info(fields,restart)}
+                           ,{index,[state]}
+                          ]),
   mnesia:create_table(userinformation
   	                 ,[{disc_copies
   	                   ,[node()]}
@@ -79,6 +87,7 @@ publish(Message) ->
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           Datetime = proplists:get_value(<<"datetime">>,DecodedMessage),
           AccountId = proplists:get_value(<<"account_id">>,DecodedMessage),
+          DropedMsg = proplists:get_value(<<"dropedmsg">>,DecodedMessage),
           Data = #storemessage{messageid = MessageId
                               ,topic = Topic
                               ,datetime = voifinity_message_utils:gregorian_days(Datetime)
@@ -86,7 +95,7 @@ publish(Message) ->
                               ,accountid = AccountId
                               ,from = From
                               },
-          voifinity_message_utils:server_status(From,MessageId,DecodedMessage),
+          voifinity_message_utils:server_status(From,MessageId,DecodedMessage,DropedMsg),
           mnesia:dirty_write(storemessage,Data);
         <<"group_message">> ->  
           From =proplists:get_value(<<"from">>,DecodedMessage),
@@ -456,40 +465,44 @@ store(Inputmessage) ->
       From = proplists:get_value(<<"from">>,Proplist),
       Topic = proplists:get_value(<<"clientId">>,Proplist),
       AccountId = proplists:get_value(<<"account_id">>,Proplist),
+      DropedMsg = Proplist ++ [{<<"dropedmsg">>,<<"true">>}],
+      OutMsg = {[{<<"data">>, DropedMsg}]},
+      EncodedFinalMsg = jsx:encode(element(1,OutMsg)),
+      %Out = erlang:setelement(8,Message,EncodedFinalMsg),
       case {lists:member(MessageId,mnesia:dirty_all_keys(undeliveredmsg))
             ,lists:member(MessageType,?groupinstruction)
             ,MessageType
            }  of
         {false,false,<<"user_message">>} ->
-         % UndeliveredMsg =#undeliveredmsg{messageid = MessageId
-         %                                 ,clientid = Topic
-         %                                 ,topic = Topic
-         %                                 ,message = Message
-         %                                 ,accountid = AccountId
-         %                                 },
-         % mnesia:dirty_write(undeliveredmsg,UndeliveredMsg),
-         % [StoredMsg]=mnesia:dirty_read(storemessage,MessageId),
-         % mnesia:dirty_write(StoredMsg#storemessage{status= <<"sent">> });
-           ok;
+          UndeliveredMsg =#undeliveredmsg{messageid = MessageId
+                                          ,clientid = Topic
+                                          ,topic = Topic
+                                          ,message = EncodedFinalMsg
+                                          ,accountid = AccountId
+                                          },
+          mnesia:dirty_write(undeliveredmsg,UndeliveredMsg),
+          [StoredMsg]=mnesia:dirty_read(storemessage,MessageId),
+          mnesia:dirty_write(StoredMsg#storemessage{status= <<"sent">> });
+         %  ok;
    %%%      push_determination(Group_id,MessageType,Topic);
         {false,false,<<"server_delivered_status">>}  ->
-           %UndeliveredMsg =#undeliveredmsg{messageid = MessageId
-           %                  ,clientid = From
-           %                  ,topic = From
-           %                  ,message = Message
-           %                  ,accountid = AccountId
-           %                  },
-           %mnesia:dirty_write (undeliveredmsg,UndeliveredMsg);
-           ok;
+           UndeliveredMsg =#undeliveredmsg{messageid = MessageId
+                             ,clientid = From
+                             ,topic = From
+                             ,message = Message
+                             ,accountid = AccountId
+                             },
+           mnesia:dirty_write (undeliveredmsg,UndeliveredMsg);
+           %ok;
         {false,false,<<"server_status">>} ->
-           %UndeliveredMsg =#undeliveredmsg{messageid = MessageId
-           %                   ,clientid = From
-           %                   ,topic = From
-           %                   ,message = Message
-           %                   ,accountid = AccountId
-           %                   },
-           %mnesia:dirty_write(undeliveredmsg,UndeliveredMsg);
-           ok;
+           UndeliveredMsg =#undeliveredmsg{messageid = MessageId
+                              ,clientid = From
+                              ,topic = From
+                              ,message = Message
+                              ,accountid = AccountId
+                              },
+           mnesia:dirty_write(undeliveredmsg,UndeliveredMsg);
+           %ok;
         {false,false,<<"info_message">>} ->
           ok;
         {false,false,_} ->
@@ -511,21 +524,38 @@ store(Inputmessage) ->
   end.
     
 %% when subscription hook called
-recv(_,Topic) -> 
-  io:format("\n\n\n received subscribtion hook ==================~p\n",[Topic]),
-  Data     =mnesia:dirty_index_read(undeliveredmsg,Topic,topic),
-  case Data of
+recv(ClientId,Topic) ->
+  io:format("subscrioption hook is called ~p \n",[ClientId]), 
+  case State =  mnesia:dirty_read(restart,ClientId) of
     [] ->
       ok;
-    _ ->  
-      messages(Topic,Data)
+    _ ->
+       io:format("\n\n\n received subscribtion hook ==================~p\n",[Topic]),
+       %[Restart] = mnesia:dirty_read(restart,ClientId),
+       mnesia:dirty_delete(restart,ClientId),
+       Data = mnesia:dirty_index_read(undeliveredmsg,Topic,topic),
+       case Data of
+         [] -> ok;
+         _ ->
+           messages(Topic,Data)
+       end
   end.
+  %timer:sleep(8000),
+  %Data     =mnesia:dirty_index_read(undeliveredmsg,Topic,topic),
+  %case Data of
+  %  [] ->
+  %    ok;
+  %  _ ->  
+  %    messages(Topic,Data)
+  %end.
 
 messages(_,[]) ->
   ok;
 messages(Topic,[H|T]) ->
   Message = element(5,H),
-  Data = emqx_message:make(Topic,Message),
+  io:format("hadfadfdfdfdf ~p\n",[jsx:decode(Message)]),
+  From = proplists:get_value(<<"from">>,element(2,hd(jsx:decode(Message)))),
+  Data = emqx_message:make(From,2,Topic,Message),
   emqx:publish(Data),
   messages(Topic,T).
 
@@ -612,7 +642,9 @@ notification_for_all([H|T]) ->
       notification_for_all(T)
   end.
 
-
+restart(ClientId,Details) ->
+   State = #restart{clientid = ClientId, state = high},
+   mnesia:dirty_write(restart , State).
 %% when Client disconnects 
 %% %last_seen(ClientId)  ->
 %% %  case mnesia:dirty_read(userinformation,ClientId) of

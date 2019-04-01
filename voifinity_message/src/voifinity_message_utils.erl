@@ -7,7 +7,7 @@
 	    ,name_change_notification/3
 	    ,deleted_notification/3
 	    ,left_notification/3
-	    ,server_status/3
+	    ,server_status/4
 	    ,server_status_delivered/3
 	    ,gregorian_days/1
 	    ]).
@@ -108,7 +108,10 @@ left_notification(MessageId,[H|T],Message) ->
   Publish = emqx_message:make(H,EncodedFinalMsg),
   emqx:publish(Publish),
   left_notification(MessageId,T,Message).
-server_status(To,MessageId,Message) ->
+
+server_status(_,_,_,<<"true">>) ->
+  ok;
+server_status(To,MessageId,Message,undefined) ->
   NewMessageId = list_to_binary(binary_to_list(MessageId) ++ binary_to_list(<<"-sent">>)),
   {Mega, Sec, Micro} = os:timestamp(),
   From = proplists:get_value(<<"clientId">>,Message),
@@ -129,22 +132,19 @@ server_status_delivered(To,MessageId,Message) ->
   DeliveredTime = erlang:system_time(milli_seconds),
   From = proplists:get_value(<<"clientId">>,Message),
   {{Year,Month,Day},{Hour,Minute,Second}} =calendar:now_to_universal_time(erlang:timestamp()),
-  Time = io_lib:format("~4.10.0B-~2.10.0B-~2.10.0B ~2.10.0B:~2.10.0B:~2.10.0B",[Year,Month, Day, Hour, Minute, Second]),
+  %Time = io_lib:format("~4.10.0B-~2.10.0B-~2.10.0B ~2.10.0B:~2.10.0B:~2.10.0B",[Year,Month, Day, Hour, Minute, Second]),
   Message1 = lists:keyreplace(<<"message_id">>,1,Message,{<<"message_id">>,NewMessageId}),
   Message2 = lists:keyreplace(<<"message_type">>,1,Message1,{<<"message_type">>,<<"server_delivered_status">>}),
-  Message3 = lists:keyreplace(<<"datetime">>,1,Message2,{<<"datetime">>,list_to_binary(Time)}),
- % Message4 = lists:keyreplace(<<"timesort">>,1,Message3,{<<"timesort">>,TimeSort}),
-  Message4 =Message3,
-  Message5 = lists:keyreplace(<<"status">>,1,Message4,{<<"status">>,<<"delivered">>}),
-  Message6 = Message5 ++ [{<<"class">>,<<"messageStatus">>},{<<"delivered_time">>,DeliveredTime}],
-  FinalMessage = {[{<<"data">>,Message6}]},
+ % Message3 = lists:keyreplace(<<"datetime">>,1,Message2,{<<"datetime">>,list_to_binary(Time)}),
+  Message3 = lists:keyreplace(<<"timesort">>,1,Message2,{<<"timesort">>,TimeSort}),
+  %Message4 =Message3,
+  Message4 = lists:keyreplace(<<"status">>,1,Message3,{<<"status">>,<<"delivered">>}),
+  Message5 = Message4 ++ [{<<"class">>,<<"messageStatus">>},{<<"delivered_time">>,DeliveredTime}],
+  FinalMessage = {[{<<"data">>,Message5}]},
   EncodedFinalMsg = jsx:encode(element(1,FinalMessage)),
   Publish = emqx_message:make(From,2,To,EncodedFinalMsg),
  % Publish = emqx_message:make(From,EncodedFinalMsg),
   emqx:publish(Publish).
-
-
-
 gregorian_days(A) ->
   A1=binary_to_list(A),
   {Y,M,D} = { list_to_integer(lists:sublist(binary_to_list(A),1,4))
