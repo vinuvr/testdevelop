@@ -1,6 +1,6 @@
 -module(voifinity_message_group_handler).
 -export([init/2
-	      ,handle_req/3
+	,handle_req/3
         ,json_creation/3
         ]).
 init(Req0, State) ->
@@ -34,6 +34,6 @@ json_creation([],Accumulator,Req) ->
   Out = jsx:encode(Accumulator),
   cowboy_req:reply(200, #{<<"content-type">> => <<"application/json">>},Out,Req);
 json_creation([H|T],Accumulator,Req) ->
-  Message = jsx:decode(element(8,element(5,H))),
+  Message = element(2,hd(jsx:decode(element(8,element(5,H))))),
   json_creation(T,[Message|Accumulator],Req).
 

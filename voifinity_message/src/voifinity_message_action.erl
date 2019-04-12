@@ -10,7 +10,7 @@
 	,push/1
         ,push_determination/3
         ,restart/2
-	]).
+        ]).
 -record(restart,{clientid,state}).
 -record(undeliveredmsg,{messageid,clientid,topic,message,accountid,field1,field2,field3,field4,field5}).
 -record(userinformation,{topic,faviourategroup,last_seen,field1,field2,field3,field4,field5}).
@@ -29,21 +29,20 @@
 	                     ]).
 
 init() ->
-  %%
   mnesia:create_schema([node()]),
   mnesia:start(),
-  mnesia:create_table(undeliveredmsg
-  	                 ,[{disc_copies
-  	                   ,[node()]}
-  	                   ,{attributes,record_info(fields,undeliveredmsg)}
-  	                   ,{index,[clientid,topic,message,accountid,field1,field2,field3,field4,field5]}
-  	                  ]),
   mnesia:create_table(restart
                       ,[{ram_copies
                            ,[node()]}
                            ,{attributes,record_info(fields,restart)}
                            ,{index,[state]}
                           ]),
+  mnesia:create_table(undeliveredmsg
+  	                 ,[{disc_copies
+  	                   ,[node()]}
+  	                   ,{attributes,record_info(fields,undeliveredmsg)}
+  	                   ,{index,[clientid,topic,message,accountid,field1,field2,field3,field4,field5]}
+  	                  ]),
   mnesia:create_table(userinformation
   	                 ,[{disc_copies
   	                   ,[node()]}
@@ -72,22 +71,20 @@ init() ->
 
 % when publish hook called
 publish(Message) ->
-  io:format("Message publish voifinity hook : ~p",[Message]),
-  MsgCheck = element(8,Message),
-  case MsgCheck of
+  case MsgCheck = element(8,Message) of
     <<"Connection Closed abnormally..!">> ->
       io:format("\nmqtt client closed successfully...!\n");
     _ ->
       DecodedMessage= element(2,hd(jsx:decode(element(8,Message)))),
-      io:format("sent message publish : ~p\n",[DecodedMessage]),
+      From = proplists:get_value(<<"from">>,DecodedMessage),
+      Sender = proplists:get_value(<<"sender">>,DecodedMessage),
+      io:format("sender ~p with clientid ~p published a message \n",[Sender,From]),
       case  proplists:get_value(<<"message_type">>,DecodedMessage) of
         <<"user_message">>  ->  
           Topic = proplists:get_value(<<"clientId">>,DecodedMessage),
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           Datetime = proplists:get_value(<<"datetime">>,DecodedMessage),
           AccountId = proplists:get_value(<<"account_id">>,DecodedMessage),
-          DropedMsg = proplists:get_value(<<"dropedmsg">>,DecodedMessage),
           Data = #storemessage{messageid = MessageId
                               ,topic = Topic
                               ,datetime = voifinity_message_utils:gregorian_days(Datetime)
@@ -95,10 +92,9 @@ publish(Message) ->
                               ,accountid = AccountId
                               ,from = From
                               },
-          voifinity_message_utils:server_status(From,MessageId,DecodedMessage,DropedMsg),
+          voifinity_message_utils:server_status(From,MessageId,DecodedMessage),
           mnesia:dirty_write(storemessage,Data);
         <<"group_message">> ->  
-          From =proplists:get_value(<<"from">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           Datetime = proplists:get_value(<<"datetime">>,DecodedMessage),
@@ -192,7 +188,6 @@ publish(Message) ->
                                  },
           mnesia:dirty_write(pushnotification,Data);
         <<"make_admin">>  ->  
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           FutureAdmin = proplists:get_value(<<"future_admin">>,DecodedMessage),
@@ -207,7 +202,6 @@ publish(Message) ->
               io:format("you are not admin\n")
          end;
         <<"off_notify_with_smart_notify">> -> 
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           SmartNotificationState = proplists:get_value(<<"smart_notification">>,DecodedMessage),
           PresentNotifyRestriction = element(6,hd(mnesia:dirty_read(group,GroupId))),
@@ -248,7 +242,6 @@ publish(Message) ->
                              },
           mnesia:dirty_write(storemessage,Data);
         <<"add_faviourate_group">> -> 
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           GroupName = proplists:get_value(<<"group_name">>,DecodedMessage),
           case  CurrentFavGroup = mnesia:dirty_read(userinformation,From) of
@@ -261,13 +254,11 @@ publish(Message) ->
               mnesia:dirty_write(userinformation,User)
           end;
         <<"@_message">> ->  
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           Members = element(3,hd(mnesia:dirty_read(group,GroupId))) -- [From],
           voifinity_message_utils:special_message(MessageId,Members,DecodedMessage);    
         <<"mute_notification">> ->  
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           NotificationRestriction = element(6,hd(mnesGroupa:dirty_read(group,GroupId))),
           State1 = NotificationRestriction -- [{From,on}],
@@ -278,7 +269,6 @@ publish(Message) ->
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           GroupMembers = proplists:get_value(<<"group_members">>,DecodedMessage),
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           GroupName = proplists:get_value(<<"group_name">>,DecodedMessage),
           Data =#group{groupid = GroupId
                       ,memberslist = GroupMembers
@@ -295,7 +285,6 @@ publish(Message) ->
           io:format("dfdlkjflkkk\n"),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           AccountId = proplists:get_value(<<"account_id">>,DecodedMessage),
           Datetime = proplists:get_value(<<"datetime">>,DecodedMessage),
           Newname = proplists:get_value(<<"new_group_name">>,DecodedMessage),
@@ -316,7 +305,6 @@ publish(Message) ->
         <<"name_change_notification">> -> 
           ok;
         <<"group_delete">>     -> 
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           case lists:member(From,element(4,hd(mnesia:dirty_read(group,GroupId)))) of
@@ -328,7 +316,6 @@ publish(Message) ->
               ok
           end;
         <<"group_add_member">> -> 
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           CurrentMembersInGroup = element(3,hd(mnesia:dirty_read(group,GroupId))),
@@ -350,7 +337,6 @@ publish(Message) ->
               ok
           end;
         <<"group_delete_member">> -> 
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           CurrentMembersInGroup = element(3,hd(mnesia:dirty_read(group,GroupId))),
           DeletingMemberInGroup = proplists:get_value(<<"deleting_member">>,DecodedMessage),
@@ -391,7 +377,6 @@ publish(Message) ->
               ok
           end;
         <<"group_leave_member">>  -> 
-          From = proplists:get_value(<<"from">>,DecodedMessage),
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           Members = element(3,hd(mnesia:dirty_read(group,GroupId))) -- [From],
@@ -449,10 +434,8 @@ publish(Message) ->
           end
       end
   end.
-    
 %%% when drop hook called      
 store(Inputmessage) ->
-  io:format("drop hook is called~p\n",[Inputmessage]),
   WillMsg = element(7, Inputmessage),
   case WillMsg of
     <<"WillMsg">> ->
@@ -468,7 +451,6 @@ store(Inputmessage) ->
       DropedMsg = Proplist ++ [{<<"dropedmsg">>,<<"true">>}],
       OutMsg = {[{<<"data">>, DropedMsg}]},
       EncodedFinalMsg = jsx:encode(element(1,OutMsg)),
-      %Out = erlang:setelement(8,Message,EncodedFinalMsg),
       case {lists:member(MessageId,mnesia:dirty_all_keys(undeliveredmsg))
             ,lists:member(MessageType,?groupinstruction)
             ,MessageType
@@ -483,7 +465,7 @@ store(Inputmessage) ->
           mnesia:dirty_write(undeliveredmsg,UndeliveredMsg),
           [StoredMsg]=mnesia:dirty_read(storemessage,MessageId),
           mnesia:dirty_write(StoredMsg#storemessage{status= <<"sent">> });
-         %  ok;
+           %ok;
    %%%      push_determination(Group_id,MessageType,Topic);
         {false,false,<<"server_delivered_status">>}  ->
            UndeliveredMsg =#undeliveredmsg{messageid = MessageId
@@ -519,7 +501,9 @@ store(Inputmessage) ->
         {true,true,_}  ->
           io:format("condition 2\n");
         {true,false,_} ->
-           io:format(" condition3\n")
+           io:format(" condition3\n");
+        {_,_,_} ->
+          ok
       end
   end.
     
@@ -531,7 +515,6 @@ recv(ClientId,Topic) ->
       ok;
     _ ->
        io:format("\n\n\n received subscribtion hook ==================~p\n",[Topic]),
-       %[Restart] = mnesia:dirty_read(restart,ClientId),
        mnesia:dirty_delete(restart,ClientId),
        Data = mnesia:dirty_index_read(undeliveredmsg,Topic,topic),
        case Data of
@@ -540,28 +523,16 @@ recv(ClientId,Topic) ->
            messages(Topic,Data)
        end
   end.
-  %timer:sleep(8000),
-  %Data     =mnesia:dirty_index_read(undeliveredmsg,Topic,topic),
-  %case Data of
-  %  [] ->
-  %    ok;
-  %  _ ->  
-  %    messages(Topic,Data)
-  %end.
-
 messages(_,[]) ->
   ok;
 messages(Topic,[H|T]) ->
   Message = element(5,H),
-  io:format("hadfadfdfdfdf ~p\n",[jsx:decode(Message)]),
   From = proplists:get_value(<<"from">>,element(2,hd(jsx:decode(Message)))),
   Data = emqx_message:make(From,2,Topic,Message),
   emqx:publish(Data),
   messages(Topic,T).
-
 %% delivered hook called
-on_delivered(_,Message)-> %ClientId
-  io:format("message acked ======= :~p\n ",[Message]),
+on_delivered(Clientid,Message)-> 
   MsgCheck = element(8,Message),
   case MsgCheck of
     <<"Connection Closed abnormally..!">> ->
@@ -572,7 +543,7 @@ on_delivered(_,Message)-> %ClientId
       From = proplists:get_value(<<"from">>,Proplist),
       MessageType = proplists:get_value(<<"message_type">>,Proplist),
       Topic = element(7,Message),
-      io:format("Message delivered to \n\n~p\n~p\n~p\n",[MessageId,Topic,From]),
+      io:format("Messageid ~p acked and  delivered to topic ~p from ~p\n",[MessageId,Topic,From]),
       case {lists:member(MessageId,mnesia:dirty_all_keys(undeliveredmsg)),MessageType}  of
         {true,<<"user_message">>} ->
           voifinity_message_utils:server_status_delivered(From,MessageId,Proplist),
@@ -641,10 +612,11 @@ notification_for_all([H|T]) ->
     false ->
       notification_for_all(T)
   end.
-
+% when client is created 
 restart(ClientId,Details) ->
    State = #restart{clientid = ClientId, state = high},
    mnesia:dirty_write(restart , State).
+
 %% when Client disconnects 
 %% %last_seen(ClientId)  ->
 %% %  case mnesia:dirty_read(userinformation,ClientId) of
