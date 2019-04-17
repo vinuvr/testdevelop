@@ -6,9 +6,9 @@
 	,messages/2
 	,on_delivered/2
 	,publish/1
-	,notification_for_all/1
-	,push/1
-        ,push_determination/3
+	,notification_for_all/3
+	,push/3
+        ,push_determination/5
         ,restart/2
         ]).
 -record(restart,{clientid,state}).
@@ -85,6 +85,7 @@ publish(Message) ->
           MessageId = proplists:get_value(<<"message_id">>,DecodedMessage),
           Datetime = proplists:get_value(<<"datetime">>,DecodedMessage),
           AccountId = proplists:get_value(<<"account_id">>,DecodedMessage),
+          DropedMsg = proplists:get_value(<<"dropedmsg">>,DecodedMessage),
           Data = #storemessage{messageid = MessageId
                               ,topic = Topic
                               ,datetime = voifinity_message_utils:gregorian_days(Datetime)
@@ -92,7 +93,7 @@ publish(Message) ->
                               ,accountid = AccountId
                               ,from = From
                               },
-          voifinity_message_utils:server_status(From,MessageId,DecodedMessage),
+          voifinity_message_utils:server_status(From,MessageId,DecodedMessage,DropedMsg),
           mnesia:dirty_write(storemessage,Data);
         <<"group_message">> ->  
           GroupId = proplists:get_value(<<"group_id">>,DecodedMessage),
@@ -447,6 +448,9 @@ store(Inputmessage) ->
       MessageType = proplists:get_value(<<"message_type">>,Proplist),
       From = proplists:get_value(<<"from">>,Proplist),
       Topic = proplists:get_value(<<"clientId">>,Proplist),
+      Sender = proplists:get_value(<<"sender">>,Proplist),
+      GroupId = proplists:get_value(<<"group_id">>,Proplist),
+      TypedMsg = proplists:get_value(<<"payload">>,Proplist),
       AccountId = proplists:get_value(<<"account_id">>,Proplist),
       DropedMsg = Proplist ++ [{<<"dropedmsg">>,<<"true">>}],
       OutMsg = {[{<<"data">>, DropedMsg}]},
@@ -464,9 +468,9 @@ store(Inputmessage) ->
                                           },
           mnesia:dirty_write(undeliveredmsg,UndeliveredMsg),
           [StoredMsg]=mnesia:dirty_read(storemessage,MessageId),
-          mnesia:dirty_write(StoredMsg#storemessage{status= <<"sent">> });
+          mnesia:dirty_write(StoredMsg#storemessage{status= <<"sent">> }),
            %ok;
-   %%%      push_determination(Group_id,MessageType,Topic);
+          push_determination(GroupId,MessageType,Topic,TypedMsg,Sender);
         {false,false,<<"server_delivered_status">>}  ->
            UndeliveredMsg =#undeliveredmsg{messageid = MessageId
                              ,clientid = From
@@ -563,10 +567,10 @@ on_delivered(Clientid,Message)->
       end
   end.
 %% on drop 
-push_determination(GroupId,MessageType,Topic) ->
+push_determination(GroupId,MessageType,Topic,TypedMsg,Sender) ->
   case GroupId of
     undefined ->
-      push(Topic);
+      push(Topic,TypedMsg,Sender);
     _    ->
       NotificationRestrictedMembers = element(6,hd(mnesia:dirty_read(group,GroupId))),
         case {MessageType,lists:member({Topic,off}
@@ -576,41 +580,41 @@ push_determination(GroupId,MessageType,Topic) ->
           {_,true,_} ->
                  ok;
           {<<"special_notification">>,_,true} ->
-                   push(Topic);                   
+                   push(Topic,TypedMsg,Sender);                   
           {<<"special_notification">>,false,false} ->
-             push(Topic);
+             push(Topic,TypedMsg,Sender);
           {_,_,_} ->
-             push(Topic)
+             push(Topic,TypedMsg,Sender)
         end
     end.
 
-push(Topic) ->
+push(Topic,TypedMsg,Sender) ->
   Devices=mnesia:dirty_index_read(pushnotification,Topic,topic),
   io:format("pushing\n"),   
   case Devices of
     [] ->
       ok;
      _ ->      
-      notification_for_all(Devices)
+      notification_for_all(Devices,TypedMsg,Sender)
    end.
 
-notification_for_all([]) ->
+notification_for_all([],TypedMsg,Sender) ->
   ok;
-notification_for_all([H|T]) ->
+notification_for_all([H|T],TypedMsg,Sender) ->
   DeviceType      =element(4,H),
   DeviceId        =element(2,H),
   case DeviceType == <<"android">> of
     true -> 
       io:format("pushing message to the device id\n"),
       fcm:push(push,DeviceId,[{<<"notification">>
-      	                      ,[{<<"body">>,<<"New message">>}
+      	                      ,[{<<"body">>,TypedMsg}
       	                      ,{<<"sound">>,<<"default">>}
-      	                      ,{<<"title">>,<<"Message">>}
+      	                      ,{<<"title">>,Sender}
       	                       ]}
       	                     ]),
-      notification_for_all(T);
+      notification_for_all(T,TypedMsg,Sender);
     false ->
-      notification_for_all(T)
+      notification_for_all(T,TypedMsg,Sender)
   end.
 % when client is created 
 restart(ClientId,Details) ->
